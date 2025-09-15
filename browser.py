@@ -26,6 +26,9 @@ def count_request(lines):
 
 
 def print_table(counts: Counter, total: int):
+    if total == 0:
+        print("No request.")
+        return
     items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     print(f"{'Browser':<30} {'Requests':>10} {'Share %':>9}")
     print(f"{'-'*20} {'-'*10:>10} {'-'*9:>9}")
