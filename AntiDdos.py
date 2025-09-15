@@ -10,20 +10,19 @@ import os
 from apachelogs import LogParser
 
 
-file_log = "/var/log/nginx/access.log"
-checkpoint = "/var/tmp/antiddos.offset"
-lock_file = "/var/tmp/antiddos.lock" # tránh chạy chồng
-thoi_gian = 60
+access_log_path = "/var/log/nginx/access.log"
+offset_file_path = "/var/tmp/antiddos.offset"
+lock_file_path = "/var/tmp/antiddos.lock"  # tránh chạy chồng
+window_seconds = 60
 request_limit = 120
-bot_auth = ("Googlebot", "bingbot", "facebookexternalhit", "Facebot")
-ipset = "ddos_block"
+bot_auth_keywords = ("Googlebot", "bingbot", "facebookexternalhit", "Facebot")
+ipset_name = "ddos_block"
+
+_dns_cache_map = {}
 
 
-_dns_cache = {}
-
-
-#Nếu đã có tiến trình khác giữ lock, in thông báo và thoát.
-def acquire_lock(path=lock_file):
+# Nếu đã có tiến trình khác giữ lock, in thông báo và thoát.
+def acquire_lock(path=lock_file_path):
     f = open(path, "w")
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -34,8 +33,9 @@ def acquire_lock(path=lock_file):
         print("Một phiên AntiDdos.py khác đang chạy")
         sys.exit(0)
 
-#kiểm tra xem có phải file text/html không
-def check_request(path: str) -> bool:
+
+# kiểm tra xem có phải file text/html không
+def is_static_asset(path: str) -> bool:
     parsed = urlparse(path)
     clean_path = unquote(parsed.path)
     mime_type, _ = mimetypes.guess_type(clean_path)
@@ -45,20 +45,21 @@ def check_request(path: str) -> bool:
         return True
     return False
 
-#Chỉ cho qua Google/Bing/Facebook thật.
-def verify_bot(ip: str, ua: str) -> bool:
-    ua_l = ua.lower()
+
+# Chỉ cho qua Google/Bing/Facebook thật.
+def is_verified_bot(client_ip: str, user_agent: str) -> bool:
+    ua_l = user_agent.lower()
     google = "googlebot" in ua_l
     bing = "bingbot" in ua_l
     fb = ("facebookexternalhit" in ua_l) or ("facebot" in ua_l)
     if not (google or bing or fb):
         return False
     try:
-        if ip in _dns_cache:
-            host = _dns_cache[ip]["host"]
+        if client_ip in _dns_cache_map:
+            host = _dns_cache_map[client_ip]["host"]
         else:
-            host, _, _ = socket.gethostbyaddr(ip)
-            _dns_cache[ip] = {"host": host}
+            host, _, _ = socket.gethostbyaddr(client_ip)
+            _dns_cache_map[client_ip] = {"host": host}
     except Exception:
         return False
     host_l = host.lower()
@@ -69,18 +70,18 @@ def verify_bot(ip: str, ua: str) -> bool:
     if fb and not host_l.endswith(".facebook.com"):
         return False
     try:
-        if "addrs" not in _dns_cache[ip]:
+        if "addrs" not in _dns_cache_map[client_ip]:
             infos = socket.getaddrinfo(host, None)
             addrs = {ai[4][0] for ai in infos}
-            _dns_cache[ip]["addrs"] = addrs
+            _dns_cache_map[client_ip]["addrs"] = addrs
         else:
-            addrs = _dns_cache[ip]["addrs"]
-        return ip in addrs
+            addrs = _dns_cache_map[client_ip]["addrs"]
+        return client_ip in addrs
     except Exception:
         return False
 
 
-#chỉ xử lý log mới
+# chỉ xử lý log mới
 def read_new_lines(log_path: str, offset_path: str):
     # Đọc offset cũ (nếu có)
     try:
@@ -111,19 +112,21 @@ def read_new_lines(log_path: str, offset_path: str):
     except Exception:
         pass
 
-def add_to_ipset(ip: str):
+
+def add_ip_to_ipset(ip_address: str):
     subprocess.run(
-        ["ipset", "add", ipset, ip,"-exist"],
+        ["ipset", "add", ipset_name, ip_address, "-exist"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
+
 
 def main():
     lock_handle = acquire_lock()
     parser = LogParser('%h %l %u %t "%r" %>s %b "%{Referer}i" "%{User-Agent}i"')
-    ts_by_ip = defaultdict(lambda: deque())
-    peak_by_ip = defaultdict(int)
+    timestamps_by_ip = defaultdict(lambda: deque())
+    peak_requests_by_ip = defaultdict(int)
     total_lines = 0
-    for line in read_new_lines(file_log, checkpoint):
+    for line in read_new_lines(access_log_path, offset_file_path):
         total_lines += 1
         try:
             log = parser.parse(line)
@@ -134,38 +137,39 @@ def main():
             if not log.request_line or not log.request_line.startswith("GET"):
                 continue
             # bỏ bot thật
-            ua = log.headers_in.get("User-Agent", "")
-            if any(kw in ua for kw in bot_auth):
-                ip = log.remote_host
-                if verify_bot(ip, ua):
+            user_agent = log.headers_in.get("User-Agent", "")
+            if any(kw in user_agent for kw in bot_auth_keywords):
+                client_ip = log.remote_host
+                if is_verified_bot(client_ip, user_agent):
                     continue
             # bỏ file tĩnh
             parts = log.request_line.split()
             if len(parts) < 2:
                 continue
             path = parts[1]
-            if check_request(path):
+            if is_static_asset(path):
                 continue
-            ip = log.remote_host
-            t = log.request_time
-            dq = ts_by_ip[ip]
-            dq.append(t)
-            win_start = t - timedelta(seconds=thoi_gian)
-            while dq and dq[0] <= win_start:
+            client_ip = log.remote_host
+            request_time = log.request_time
+            dq = timestamps_by_ip[client_ip]
+            dq.append(request_time)
+            window_start = request_time - timedelta(seconds=window_seconds)
+            while dq and dq[0] <= window_start:
                 dq.popleft()
-            if len(dq) > peak_by_ip[ip]:
-                peak_by_ip[ip] = len(dq)
+            if len(dq) > peak_requests_by_ip[client_ip]:
+                peak_requests_by_ip[client_ip] = len(dq)
         except Exception:
             continue
-    offenders = [(ip, peak) for ip, peak in peak_by_ip.items() if peak > request_limit]
+    offenders = [(client_ip, peak) for client_ip, peak in peak_requests_by_ip.items() if peak > request_limit]
     if offenders:
         print("IP vi phạm (req/60s):")
-        for ip, peak in sorted(offenders, key=lambda x: -x[1]):
-            print(f"{ip} : {peak} req/60s")
-            add_to_ipset(ip)
+        for client_ip, peak in sorted(offenders, key=lambda x: -x[1]):
+            print(f"{client_ip} : {peak} req/60s")
+            add_ip_to_ipset(client_ip)
     else:
         print("Không có IP vi phạm.")
     print(f"Đã đọc {total_lines} dòng mới")
     lock_handle.close()
+
 
 main()

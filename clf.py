@@ -1,53 +1,59 @@
-import sys, re #sys để đọc input, re để tách, xử lý chuỗi
+import sys
+import re  # sys để đọc input, re để tách, xử lý chuỗi
 from datetime import datetime
 
-#dùng để bắt chính xác từng trường trong log
-pattern = re.compile(
-#\S+: ăn(lưu) hết 1 chuỗi kí tự không có khoảng trắng
-#\s+: nuốt 1 kí tự là khoảng trắng
-     r'^(?P<remote_addr>\S+)\s+' 
-            r'(?P<xff>\S+)\s+'
-            r'\[(?P<time_iso8601>[^\]]+)\]\s+' #[^\]]+ bắt tất cả những kí tự không phải dấu ]
-            r'(?P<http_host>\S+)\s+'
-            r'"(?P<request>[^"]*)"\s+'
-            r'(?P<status>\d{3})\s+'
-            r'(?P<bytes_sent>\S+)\s+'
-            r'"(?P<referer>[^"]*)"\s+'
-            r'"(?P<ua>[^"]*)"\s+'
-            r'(?P<gzip_ratio>\S+)\s+'
-            r'(?P<req_len>\S+)\s+'
-            r'(?P<req_time>\S+)\s*$',
-    re.ASCII #re.ASCII làm cho \d, \s, \w chỉ match ASCII (nhanh/chuẩn hơn cho log tiếng Anh/ASCII).
+# dùng để bắt chính xác từng trường trong log
+log_pattern = re.compile(
+    # \S+: ăn (lưu) hết 1 chuỗi kí tự không có khoảng trắng
+    # \s+: nuốt 1 kí tự là khoảng trắng
+    r'^(?P<remote_address>\S+)\s+'
+    r'(?P<forwarded_for>\S+)\s+'
+    r'\[(?P<time_iso8601>[^\]]+)\]\s+'  # [^\]]+ bắt tất cả ký tự không phải dấu ]
+    r'(?P<http_host>\S+)\s+'
+    r'"(?P<request>[^"]*)"\s+'
+    r'(?P<status>\d{3})\s+'
+    r'(?P<bytes_sent>\S+)\s+'
+    r'"(?P<referer>[^"]*)"\s+'
+    r'"(?P<user_agent>[^"]*)"\s+'
+    r'(?P<gzip_ratio>\S+)\s+'
+    r'(?P<request_length>\S+)\s+'
+    r'(?P<request_time>\S+)\s*$',
+    re.ASCII  # re.ASCII làm cho \d, \s, \w chỉ match ASCII (nhanh/chuẩn hơn cho log tiếng Anh/ASCII).
 )
 
-def pick_ip(xff: str, remote_adrr: str) ->str:
-    if xff and xff != '-' and xff.strip():
-        return xff.split(',')[0].strip()
+
+def select_ip(forwarded_for: str, remote_address: str) -> str:
+    if forwarded_for and forwarded_for != '-' and forwarded_for.strip():
+        return forwarded_for.split(',')[0].strip()
     else:
-        return remote_adrr
+        return remote_address
 
-def normalize_time(timeiso: str)-> str:
-    try: #nếu chuẩn hóa được
-        timeCLF = timeiso.replace('Z', '+00:00' )
-        dt=datetime.fromisoformat(timeCLF)
+
+def normalize_time(iso_time: str) -> str:
+    try:  # nếu chuẩn hóa được
+        time_clf = iso_time.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(time_clf)
         return dt.strftime("%d/%b/%Y:%H:%M:%S %z")
-    except Exception: #nếu không chuẩn hóa được
-        return timeiso
+    except Exception:  # nếu không chuẩn hóa được
+        return iso_time
 
-def convert_log(m)->str:
-    ip = pick_ip(m['xff'], m['remote_addr'])
-    time = normalize_time(m['time_iso8601'])
-    request = m['request']
-    status = m['status']
-    size = m['bytes_sent']
+
+def convert_log_entry(match_obj) -> str:
+    ip = select_ip(match_obj['forwarded_for'], match_obj['remote_address'])
+    log_time = normalize_time(match_obj['time_iso8601'])
+    request = match_obj['request']
+    status = match_obj['status']
+    size = match_obj['bytes_sent']
+    return f"{ip} [{log_time}] \"{request}\" {status} {size}"
+
 
 def main():
     for line in sys.stdin:
-        line = line.rstrip("\n") #rstrip: xóa bỏ kí tự xuống dòng ở cuối chuỗi nếu có
-        m = pattern.match(line)
-        if m:
-            print(convert_log(m))
-
-main()
+        line = line.rstrip("\n")  # rstrip: xóa bỏ kí tự xuống dòng ở cuối chuỗi nếu có
+        match_obj = log_pattern.match(line)
+        if match_obj:
+            print(convert_log_entry(match_obj))
 
 
+if __name__ == "__main__":
+    main()
