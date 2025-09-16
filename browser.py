@@ -40,10 +40,8 @@ def print_table(counts: Counter, total: int):
 
 
 def main():
-    # đọc toàn bộ log từ stdin
     lines = (line.rstrip("\n") for line in sys.stdin)
     counts, total = count_request(lines)
     print_table(counts, total)
-
 
 main()

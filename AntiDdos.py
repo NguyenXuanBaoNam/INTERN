@@ -11,9 +11,9 @@ from apachelogs import LogParser
 
 
 access_log_path = "/var/log/nginx/access.log"
-offset_file_path = "/var/tmp/antiddos.offset"
+offset_file_path = "/var/tmp/antiddos.offset" #lưu vị trí offset đã đọc để chỉ đọc phần log mới
 lock_file_path = "/var/tmp/antiddos.lock"  # tránh chạy chồng
-window_seconds = 60
+time_window = 60
 request_limit = 120
 bot_auth_keywords = ("Googlebot", "bingbot", "facebookexternalhit", "Facebot")
 ipset_name = "ddos_block"
@@ -21,7 +21,7 @@ ipset_name = "ddos_block"
 _dns_cache_map = {}
 
 
-# Nếu đã có tiến trình khác giữ lock, in thông báo và thoát.
+#nếu đã có tiến trình khác giữ lock, in thông báo và thoát.
 def acquire_lock(path=lock_file_path):
     f = open(path, "w")
     try:
@@ -34,7 +34,7 @@ def acquire_lock(path=lock_file_path):
         sys.exit(0)
 
 
-# kiểm tra xem có phải file text/html không
+#kiểm tra xem có phải file text/html không
 def is_static_asset(path: str) -> bool:
     parsed = urlparse(path)
     clean_path = unquote(parsed.path)
@@ -46,7 +46,7 @@ def is_static_asset(path: str) -> bool:
     return False
 
 
-# Chỉ cho qua Google/Bing/Facebook thật.
+#chỉ cho qua Google/Bing/Facebook thật.
 def is_verified_bot(client_ip: str, user_agent: str) -> bool:
     ua_l = user_agent.lower()
     google = "googlebot" in ua_l
@@ -81,7 +81,7 @@ def is_verified_bot(client_ip: str, user_agent: str) -> bool:
         return False
 
 
-# chỉ xử lý log mới
+#chỉ xử lý log mới
 def read_new_lines(log_path: str, offset_path: str):
     # Đọc offset cũ (nếu có)
     try:
@@ -133,16 +133,16 @@ def main():
         except Exception:
             continue
         try:
-            # chỉ tính GET
+            #chỉ tính GET
             if not log.request_line or not log.request_line.startswith("GET"):
                 continue
-            # bỏ bot thật
+            #bỏ bot thật
             user_agent = log.headers_in.get("User-Agent", "")
             if any(kw in user_agent for kw in bot_auth_keywords):
                 client_ip = log.remote_host
                 if is_verified_bot(client_ip, user_agent):
                     continue
-            # bỏ file tĩnh
+            #bỏ file tĩnh
             parts = log.request_line.split()
             if len(parts) < 2:
                 continue
@@ -153,7 +153,7 @@ def main():
             request_time = log.request_time
             dq = timestamps_by_ip[client_ip]
             dq.append(request_time)
-            window_start = request_time - timedelta(seconds=window_seconds)
+            window_start = request_time - timedelta(seconds=time_requested)
             while dq and dq[0] <= window_start:
                 dq.popleft()
             if len(dq) > peak_requests_by_ip[client_ip]:

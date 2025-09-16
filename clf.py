@@ -2,7 +2,7 @@ import sys
 import re  # sys để đọc input, re để tách, xử lý chuỗi
 from datetime import datetime
 
-# dùng để bắt chính xác từng trường trong log
+# dùng để bắt từng trường trong log
 log_pattern = re.compile(
     # \S+: ăn (lưu) hết 1 chuỗi kí tự không có khoảng trắng
     # \s+: nuốt 1 kí tự là khoảng trắng
@@ -18,7 +18,7 @@ log_pattern = re.compile(
     r'(?P<gzip_ratio>\S+)\s+'
     r'(?P<request_length>\S+)\s+'
     r'(?P<request_time>\S+)\s*$',
-    re.ASCII  # re.ASCII làm cho \d, \s, \w chỉ match ASCII (nhanh/chuẩn hơn cho log tiếng Anh/ASCII).
+    re.ASCII  # re.ASCII làm cho \d, \s, \w chỉ match ASCII
 )
 
 
@@ -49,11 +49,9 @@ def convert_log_entry(match_obj) -> str:
 
 def main():
     for line in sys.stdin:
-        line = line.rstrip("\n")  # rstrip: xóa bỏ kí tự xuống dòng ở cuối chuỗi nếu có
+        line = line.rstrip("\n")
         match_obj = log_pattern.match(line)
         if match_obj:
             print(convert_log_entry(match_obj))
 
-
-if __name__ == "__main__":
-    main()
+main()
